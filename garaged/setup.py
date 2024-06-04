@@ -20,7 +20,7 @@ REQUIRED = [
     'numpy>=1.14.5',
     'psutil',
     'python-dateutil',
-    'ray<=0.8.6',
+    'ray',
     'scikit-image',
     'scipy',
     'setproctitle>=1.0',
