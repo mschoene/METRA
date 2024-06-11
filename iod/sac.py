@@ -184,7 +184,7 @@ class SAC(IOD):
             worker_update=dict(
                 _render=False,
                 _deterministic_initial_state=False,
-            #    _deterministic_policy=self.eval_deterministic_traj,
+                _deterministic_policy=self.eval_deterministic_traj,
             ),
             env_update=dict(_action_noise_std=None),
         )

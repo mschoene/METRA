@@ -42,6 +42,8 @@ class IOD(RLAlgorithm):
             eval_record_video,
             video_skip_frames,
             eval_plot_axis,
+            eval_deterministic_traj=True,
+            eval_deterministic_video=True,
             name='IOD',
             device=torch.device('cpu'),
             sample_cpu=True,
@@ -53,6 +55,7 @@ class IOD(RLAlgorithm):
             trans_optimization_epochs=None,
             discrete=False,
             unit_length=False,
+
     ):
         self.env_name = env_name
         self.algo = algo
@@ -96,6 +99,9 @@ class IOD(RLAlgorithm):
         self.eval_record_video = eval_record_video
         self.video_skip_frames = video_skip_frames
         self.eval_plot_axis = eval_plot_axis
+        
+        self.eval_deterministic_traj = bool(eval_deterministic_traj)
+        self.eval_deterministic_video = eval_deterministic_video
 
         assert isinstance(optimizer, OptimizerGroupWrapper)
         self._optimizer = optimizer
@@ -230,8 +236,13 @@ class IOD(RLAlgorithm):
                           batch_size=None,
                           extras=None,
                           update_stats=False,
-                          worker_update=None,
-                          env_update=None):
+                          #worker_update=None,
+                          worker_update=dict(
+                            _deterministic_initial_state=False,
+                            _deterministic_policy=False,
+                          ),
+                          env_update=None
+                          ):
         if batch_size is None:
             batch_size = len(extras)
         policy_sampler_key = sampler_key[6:] if sampler_key.startswith('local_') else sampler_key
