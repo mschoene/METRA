@@ -591,6 +591,10 @@ class ExperimentTemplate:
             return self
         else:
             ctxt = self._make_context(self._get_options(*args), **kwargs)
+            print( "         ")
+            print(ctxt)
+
+
             result = self.function(ctxt, **kwargs)
             logger.remove_all()
             logger.pop_prefix()

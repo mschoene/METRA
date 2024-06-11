@@ -16,6 +16,12 @@ import sys
 import platform
 import torch.multiprocessing as mp
 
+from garaged.src.garage.torch.modules.mlp_module import MLPModule
+from garagei.envs.child_policy_env import ChildPolicyEnv
+from iod.ppo import PPO
+from iod.sac import SAC
+
+
 if 'mac' in platform.platform():
     pass
 else:
@@ -60,12 +66,22 @@ else:
 def get_argparser():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
+    parser.add_argument('--cp_path', type=str, default=None)
+    parser.add_argument('--cp_path_idx', type=int, default=None)  # For exp name
+    parser.add_argument('--cp_multi_step', type=int, default=1)
+    parser.add_argument('--cp_unit_length', type=int, default=0)
+
+    parser.add_argument('--downstream_reward_type', type=str, default='esparse')
+    parser.add_argument('--downstream_num_goal_steps', type=int, default=50)
+
+    parser.add_argument('--goal_range', type=float, default=50)
+
     parser.add_argument('--run_group', type=str, default='Debug')
     parser.add_argument('--normalizer_type', type=str, default='off', choices=['off', 'preset'])
     parser.add_argument('--encoder', type=int, default=0)
 
     parser.add_argument('--env', type=str, default='maze', choices=[
-        'maze', 'half_cheetah', 'ant', 'dmc_cheetah', 'dmc_quadruped', 'dmc_humanoid', 'kitchen',
+        'maze', 'half_cheetah', 'ant', 'dmc_cheetah', 'dmc_quadruped', 'dmc_humanoid', 'kitchen','ant_nav_prime'
     ])
     parser.add_argument('--frame_stack', type=int, default=None)
 
@@ -101,7 +117,7 @@ def get_argparser():
 
     parser.add_argument('--alpha', type=float, default=0.01)
 
-    parser.add_argument('--algo', type=str, default='metra', choices=['metra', 'dads'])
+    parser.add_argument('--algo', type=str, default='metra', choices=['metra', 'dads','sac', 'ppo'])
 
     parser.add_argument('--sac_tau', type=float, default=5e-3)
     parser.add_argument('--sac_lr_q', type=float, default=None)
@@ -223,6 +239,34 @@ def make_env(args, max_path_length):
     elif args.env == 'ant':
         from envs.mujoco.ant_env import AntEnv
         env = AntEnv(render_hw=100)
+
+    
+    elif args.env == 'ant_nav_prime':
+        from envs.mujoco.ant_nav_prime_env import AntNavPrimeEnv
+
+        env = AntNavPrimeEnv(
+            max_path_length=max_path_length,
+            goal_range=args.goal_range,
+            num_goal_steps=args.downstream_num_goal_steps,
+            reward_type=args.downstream_reward_type,
+        )
+        cp_num_truncate_obs = 2
+    elif args.env == 'half_cheetah_goal':
+        from envs.mujoco.half_cheetah_goal_env import HalfCheetahGoalEnv
+        env = HalfCheetahGoalEnv(
+            max_path_length=max_path_length,
+            goal_range=args.goal_range,
+            reward_type=args.downstream_reward_type,
+        )
+        cp_num_truncate_obs = 1
+    elif args.env == 'half_cheetah_hurdle':
+        from envs.mujoco.half_cheetah_hurdle_env import HalfCheetahHurdleEnv
+
+        env = HalfCheetahHurdleEnv(
+            reward_type=args.downstream_reward_type,
+        )
+        cp_num_truncate_obs = 2
+    #elif args.env.startswith('dmc'):
     elif args.env.startswith('dmc'):
         from envs.custom_dmc_tasks import dmc
         from envs.custom_dmc_tasks.pixel_wrappers import RenderWrapper
@@ -246,10 +290,37 @@ def make_env(args, max_path_length):
     else:
         raise NotImplementedError
 
+
+    if args.env in ['dmc_quadruped_goal', 'dmc_humanoid_goal']:
+        from envs.custom_dmc_tasks.goal_wrappers import GoalWrapper
+        env = GoalWrapper(
+            env,
+            max_path_length=max_path_length,
+            goal_range=args.goal_range,
+            num_goal_steps=args.downstream_num_goal_steps,
+        )
+    cp_num_truncate_obs = 2
+
     if args.frame_stack is not None:
         from envs.custom_dmc_tasks.pixel_wrappers import FrameStackWrapper
         env = FrameStackWrapper(env, args.frame_stack)
 
+    if args.cp_path is not None:
+        cp_path = args.cp_path
+        if not os.path.exists(cp_path):
+            import glob
+            cp_path = glob.glob(cp_path)[0]
+        cp_dict = torch.load(cp_path, map_location='cpu')
+    
+        env = ChildPolicyEnv(
+            env,
+            cp_dict,
+            cp_action_range=1.5,
+            cp_unit_length=args.cp_unit_length,
+            cp_multi_step=args.cp_multi_step,
+            cp_num_truncate_obs=cp_num_truncate_obs,
+        )
+        
     normalizer_type = args.normalizer_type
     normalizer_kwargs = {}
 
@@ -257,6 +328,8 @@ def make_env(args, max_path_length):
         env = consistent_normalize(env, normalize_obs=False, **normalizer_kwargs)
     elif normalizer_type == 'preset':
         normalizer_name = args.env
+        if normalizer_name =='ant_nav_prime':
+            normalizer_name = 'ant'
         normalizer_mean, normalizer_std = get_normalizer_preset(f'{normalizer_name}_preset')
         env = consistent_normalize(env, normalize_obs=True, mean=normalizer_mean, std=normalizer_std, **normalizer_kwargs)
 
@@ -277,6 +350,8 @@ def run(ctxt=None):
     set_seed(args.seed)
     runner = OptionLocalRunner(ctxt)
     max_path_length = args.max_path_length
+    if args.cp_path is not None:
+        max_path_length *= args.cp_multi_step
     contextualized_make_env = functools.partial(make_env, args=args, max_path_length=max_path_length)
     env = contextualized_make_env()
     example_ob = env.reset()
@@ -342,7 +417,7 @@ def run(ctxt=None):
         init_std=1.,
     ))
 
-    policy_q_input_dim = module_obs_dim + args.dim_option
+    policy_q_input_dim = module_obs_dim  #+ args.dim_option
     policy_module = module_cls(
         input_dim=policy_q_input_dim,
         output_dim=action_dim,
@@ -445,6 +520,7 @@ def run(ctxt=None):
 
     replay_buffer = PathBufferEx(capacity_in_transitions=int(args.sac_max_buffer_size), pixel_shape=pixel_shape)
 
+
     if args.algo in ['metra', 'dads']:
         qf1 = ContinuousMLPQFunctionEx(
             obs_dim=policy_q_input_dim,
@@ -470,6 +546,48 @@ def run(ctxt=None):
             'log_alpha': torch.optim.Adam([
                 {'params': log_alpha.parameters(), 'lr': _finalize_lr(args.sac_lr_a)},
             ])
+        })
+
+    
+    if args.algo in ['sac', 'ppo']:
+        print("getting sac or ppo ")
+
+        policy_q_input_dim = module_obs_dim
+
+        qf1 = ContinuousMLPQFunctionEx(
+            obs_dim=policy_q_input_dim,
+            action_dim=action_dim,
+            hidden_sizes=master_dims,
+            hidden_nonlinearity=nonlinearity or torch.relu,
+        )
+        qf2 = ContinuousMLPQFunctionEx(
+            obs_dim=policy_q_input_dim,
+            action_dim=action_dim,
+            hidden_sizes=master_dims,
+            hidden_nonlinearity=nonlinearity or torch.relu,
+        )
+        log_alpha = ParameterModule(torch.Tensor([np.log(args.alpha)]))
+        optimizers.update({
+            'qf': torch.optim.Adam([
+                {'params': list(qf1.parameters()) + list(qf2.parameters()), 'lr': _finalize_lr(args.sac_lr_q)},
+            ]),
+            'log_alpha': torch.optim.Adam([
+                {'params': log_alpha.parameters(), 'lr': _finalize_lr(args.sac_lr_a)},
+            ])
+        })
+    elif args.algo == 'ppo':
+    # TODO: Currently not support pixel obs
+        vf = MLPModule(
+            input_dim=policy_q_input_dim,
+            output_dim=1,
+            hidden_sizes=master_dims,
+            hidden_nonlinearity=nonlinearity or torch.relu,
+            layer_normalization=args.critic_layer_norm,
+        )
+        optimizers.update({
+        'vf': torch.optim.Adam([
+            {'params': vf.parameters(), 'lr': _finalize_lr(args.lr_op)},
+            ]),
         })
 
     optimizer = OptimizerGroupWrapper(
@@ -545,6 +663,39 @@ def run(ctxt=None):
         algo = DADS(
             **algo_kwargs,
             **skill_common_args,
+        )
+    elif args.algo == 'ppo':
+            algo = PPO(
+            **algo_kwargs,
+            vf=vf,
+            gae_lambda=0.95,
+            ppo_clip=0.2,
+        )    
+    elif args.algo == 'sac':
+            algo = SAC(
+            **algo_kwargs,
+            qf1 = qf1,
+            qf2 = qf2,
+            log_alpha = log_alpha,
+            tau = args.sac_tau,
+            scale_reward = args.sac_scale_reward,
+            target_coef = args.sac_target_coef,
+            replay_buffer = replay_buffer,
+            min_buffer_size = args.sac_min_buffer_size,
+
+            #pixel_shape=None,
+                #parser.add_argument('--sac_tau', type=float, default=5e-3)
+                #parser.add_argument('--sac_lr_q', type=float, default=None)
+                #parser.add_argument('--sac_lr_a', type=float, default=None)
+                #parser.add_argument('--sac_discount', type=float, default=0.99)
+                #parser.add_argument('--sac_scale_reward', type=float, default=1.)
+                #parser.add_argument('--sac_target_coef', type=float, default=1.)
+                #parser.add_argument('--sac_min_buffer_size', type=int, default=10000)
+                #parser.add_argument('--sac_max_buffer_size', type=int, default=300000)
+            # **skill_common_args,
+            #vf=vf,
+            #gae_lambda=0.95,
+            #ppo_clip=0.2,
         )
     else:
         raise NotImplementedError
