@@ -77,10 +77,10 @@ def get_argparser():
     parser.add_argument('--goal_range', type=float, default=50)
 
     parser.add_argument('--run_group', type=str, default='Debug')
-    parser.add_argument('--normalizer_type', type=str, default='off', choices=['off', 'preset'])
+    parser.add_argument('--normalizer_type', type=str, default='preset', choices=['off', 'preset'])
     parser.add_argument('--encoder', type=int, default=0)
 
-    parser.add_argument('--env', type=str, default='maze', choices=[
+    parser.add_argument('--env', type=str, default='ant', choices=[
         'maze', 'half_cheetah', 'ant', 'dmc_cheetah', 'dmc_quadruped', 'dmc_humanoid', 'kitchen','ant_nav_prime'
     ])
     parser.add_argument('--frame_stack', type=int, default=None)
@@ -90,7 +90,7 @@ def get_argparser():
     parser.add_argument('--use_gpu', type=int, default=1, choices=[0, 1])
     parser.add_argument('--sample_cpu', type=int, default=1, choices=[0, 1])
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--n_parallel', type=int, default=4)
+    parser.add_argument('--n_parallel', type=int, default=1)
     parser.add_argument('--n_thread', type=int, default=1)
 
     parser.add_argument('--n_epochs', type=int, default=1000000)
@@ -106,7 +106,7 @@ def get_argparser():
     parser.add_argument('--num_random_trajectories', type=int, default=48)
     parser.add_argument('--num_video_repeats', type=int, default=2)
     parser.add_argument('--eval_record_video', type=int, default=1)
-    parser.add_argument('--eval_plot_axis', type=float, default=None, nargs='*')
+    parser.add_argument('--eval_plot_axis', type=float, default=[-50, 50, -50, 50], nargs='*')
     parser.add_argument('--video_skip_frames', type=int, default=1)
 
     parser.add_argument('--dim_option', type=int, default=2)
@@ -126,7 +126,7 @@ def get_argparser():
     parser.add_argument('--sac_scale_reward', type=float, default=1.)
     parser.add_argument('--sac_target_coef', type=float, default=1.)
     parser.add_argument('--sac_min_buffer_size', type=int, default=10000)
-    parser.add_argument('--sac_max_buffer_size', type=int, default=300000)
+    parser.add_argument('--sac_max_buffer_size', type=int, default=100000)
 
     parser.add_argument('--spectral_normalization', type=int, default=0, choices=[0, 1])
 
@@ -305,21 +305,21 @@ def make_env(args, max_path_length):
         from envs.custom_dmc_tasks.pixel_wrappers import FrameStackWrapper
         env = FrameStackWrapper(env, args.frame_stack)
 
-    if args.cp_path is not None:
-        cp_path = args.cp_path
-        if not os.path.exists(cp_path):
-            import glob
-            cp_path = glob.glob(cp_path)[0]
-        cp_dict = torch.load(cp_path, map_location='cpu')
+    # if args.cp_path is not None:
+    #     cp_path = args.cp_path
+    #     if not os.path.exists(cp_path):
+    #         import glob
+    #         cp_path = glob.glob(cp_path)[0]
+    #     cp_dict = torch.load(cp_path, map_location='cpu')
     
-        env = ChildPolicyEnv(
-            env,
-            cp_dict,
-            cp_action_range=1.5,
-            cp_unit_length=args.cp_unit_length,
-            cp_multi_step=args.cp_multi_step,
-            cp_num_truncate_obs=cp_num_truncate_obs,
-        )
+    #     env = ChildPolicyEnv(
+    #         env,
+    #         cp_dict,
+    #         cp_action_range=1.5,
+    #         cp_unit_length=args.cp_unit_length,
+    #         cp_multi_step=args.cp_multi_step,
+    #         cp_num_truncate_obs=cp_num_truncate_obs,
+    #     )
         
     normalizer_type = args.normalizer_type
     normalizer_kwargs = {}
@@ -417,7 +417,7 @@ def run(ctxt=None):
         init_std=1.,
     ))
 
-    policy_q_input_dim = module_obs_dim  #+ args.dim_option
+    policy_q_input_dim = module_obs_dim + args.dim_option
     policy_module = module_cls(
         input_dim=policy_q_input_dim,
         output_dim=action_dim,
@@ -713,7 +713,18 @@ def run(ctxt=None):
         n_workers=args.n_parallel,
     )
     algo.option_policy.to(device)
-    runner.train(n_epochs=args.n_epochs, batch_size=args.traj_batch_size)
+
+    if args.cp_path is not None:
+        # env = AntEnv(render_hw=100)
+        runner.restore(args.cp_path, make_env=contextualized_make_env,)
+        # runner.resume()
+        runner.eval()
+        print(1)
+
+    else: runner.train(n_epochs=args.n_epochs, batch_size=args.traj_batch_size)
+
+
+    
 
 
 if __name__ == '__main__':

@@ -490,6 +490,9 @@ class LocalRunner:
         self._shutdown_worker()
 
         return average_return
+    
+    def eval(self):
+        self._algo.eval(self)
 
     def step_epochs(self):
         """Step through each epoch.
