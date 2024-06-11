@@ -231,7 +231,7 @@ class IOD(RLAlgorithm):
         return last_return
     
     def eval(self, runner):
-        self._evaluate_policy(runner, test=True)
+        return self._evaluate_policy(runner, test=True)
 
     def _get_trajectories(self,
                           runner,

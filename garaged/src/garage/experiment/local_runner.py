@@ -493,6 +493,7 @@ class LocalRunner:
     
     def eval(self):
         self._algo.eval(self)
+        return self._snapshotter.snapshot_dir
 
     def step_epochs(self):
         """Step through each epoch.

@@ -718,8 +718,9 @@ def run(ctxt=None):
         # env = AntEnv(render_hw=100)
         runner.restore(args.cp_path, make_env=contextualized_make_env,)
         # runner.resume()
-        runner.eval()
-        print(1)
+        saved_dir = runner.eval()
+        print("result is saved in:", saved_dir)
+        return saved_dir
 
     else: runner.train(n_epochs=args.n_epochs, batch_size=args.traj_batch_size)
 
@@ -729,4 +730,4 @@ def run(ctxt=None):
 
 if __name__ == '__main__':
     mp.set_start_method(START_METHOD)
-    run()
+    saved_dir = run()
