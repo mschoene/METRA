@@ -21,7 +21,6 @@ REQUIRED = [
     'psutil',
     'python-dateutil',
     'ray',
-    #'ray<=0.8.6',
     'scikit-image',
     'scipy',
     'setproctitle>=1.0',
